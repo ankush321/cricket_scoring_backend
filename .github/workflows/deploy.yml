@@ -1,0 +1,68 @@
+name: Deploy
+
+# A push to main always builds the image. It deploys only when FLY_API_TOKEN is
+# set, so a repository without hosting secrets still proves the image builds.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "rehearsal builds the image; release deploys when Fly is configured"
+        type: choice
+        options: [rehearsal, release]
+        default: rehearsal
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build the server image
+        run: docker build -t cricket-scoring-backend:ci .
+
+      - name: Decide whether to deploy
+        id: deploy
+        env:
+          EVENT: ${{ github.event_name }}
+          MODE: ${{ inputs.mode }}
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          {
+            echo "### Backend deploy"
+            echo ""
+            echo "| Setting | Status |"
+            echo "|---|---|"
+            echo "| \`FLY_API_TOKEN\` | $([[ -n "$FLY_API_TOKEN" ]] && echo 'set' || echo 'missing') |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$EVENT" == workflow_dispatch && "$MODE" != release ]]; then
+            echo "go=false" >> "$GITHUB_OUTPUT"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Rehearsal: the image was built and nothing was deployed." >> "$GITHUB_STEP_SUMMARY"
+          elif [[ -z "$FLY_API_TOKEN" ]]; then
+            echo "go=false" >> "$GITHUB_OUTPUT"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Add \`FLY_API_TOKEN\` to deploy this image. The image build above is the check until then." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up flyctl
+        if: steps.deploy.outputs.go == 'true'
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy
+        if: steps.deploy.outputs.go == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only

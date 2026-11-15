@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    # Values come from .env when present (docker compose reads it automatically).
+    # POSTGRES_* only take effect the first time the volume is initialized.
+    environment:
+      POSTGRES_DB: ${DB_NAME:-cricket_scoring}
+      POSTGRES_USER: ${DB_USER:-cricket}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-cricket}
+    ports:
+      - "${DB_PORT:-5433}:5432"
+    volumes:
+      # Postgres 18+ images keep data under /var/lib/postgresql/18/docker, so mount the parent dir.
+      - cricket_scoring_pg18:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  cricket_scoring_pg18:
